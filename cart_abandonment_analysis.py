@@ -1,6 +1,9 @@
 from tensorflow.keras.layers import Input, Dense, Concatenate
 from tensorflow.keras.models import Model
 
+from sklearn.cluster import KMeans
+from datetime import datetime, timedelta
+
 import pandas as pd
 
 df = pd.read_csv("data_cart_abandonment.csv")  
@@ -182,3 +185,85 @@ misclassified_indices = np.where(y_test.values != y_pred.flatten())[0]
 print("Misclassified Examples:")
 for i in misclassified_indices[:5]:
     print(f"Actual: {y_test.values[i]}, Predicted: {y_pred[i][0]}")
+
+# Integrate User Segmentation with Cart Abandonment Prediction
+from user_segmentation import UserSegmentation
+
+# Initialize segmentation
+segmentation = UserSegmentation()
+
+# Load the full dataset for segmentation
+df_full = pd.read_csv("cleaned_cart_abandonment_data.csv")
+df_full.set_index('ID', inplace=True)
+
+# Apply segmentation
+df_segmented = segmentation.analyze_customer_behavior(df_full)
+
+# Get predictions for all data
+X_b_full = df_full[browsing_features]
+X_c_full = df_full[cart_features]
+X_ch_full = df_full[checkout_features]
+y_pred_full = model.predict([X_b_full, X_c_full, X_ch_full])
+df_segmented['Abandonment_Probability'] = y_pred_full
+
+# Visualize Cart Abandonment by Segment
+plt.figure(figsize=(10, 6))
+sns.boxplot(x='Customer_Segment', y='Abandonment_Probability', data=df_segmented)
+plt.title('Cart Abandonment Probability by Customer Segment')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# Visualize Cart Abandonment by Loyalty Tier (for loyal customers only)
+loyal_customers = df_segmented[df_segmented['Customer_Segment'] == 'loyal_customer']
+plt.figure(figsize=(10, 6))
+sns.boxplot(x='Loyalty_Tier', y='Abandonment_Probability', data=loyal_customers)
+plt.title('Cart Abandonment Probability by Loyalty Tier')
+plt.tight_layout()
+plt.show()
+
+# Calculate and display abandonment rates
+print("\nCart Abandonment Rates by Segment:")
+abandonment_rates = df_segmented.groupby('Customer_Segment')['Cart_Abandoned'].mean()
+print(abandonment_rates)
+
+print("\nCart Abandonment Rates by Loyalty Tier (Loyal Customers):")
+loyal_abandonment_rates = loyal_customers.groupby('Loyalty_Tier')['Cart_Abandoned'].mean()
+print(loyal_abandonment_rates)
+
+# Generate personalized recommendations based on segment and abandonment probability
+def generate_recommendations(row):
+    segment = row['Customer_Segment']
+    abandonment_prob = row['Abandonment_Probability']
+    
+    if segment == 'loyal_customer':
+        tier = row['Loyalty_Tier']
+        base_offer = segmentation.segment_offers['loyal_customer'][tier]
+        if abandonment_prob > 0.7:
+            base_offer['urgency_discount'] = 0.15  # Additional discount for high-risk customers
+        return base_offer
+    else:
+        base_offer = segmentation.segment_offers[segment]
+        if abandonment_prob > 0.7:
+            base_offer['urgency_discount'] = 0.15  # Additional discount for high-risk customers
+        return base_offer
+
+# Add recommendations to the dataframe
+df_segmented['Recommendations'] = df_segmented.apply(generate_recommendations, axis=1)
+
+class SessionManager:
+    def __init__(self):
+        self.active_sessions = {}
+        
+    def create_session(self, session_id):
+        self.active_sessions[session_id] = {
+            'start_time': datetime.now(),
+            'last_activity': datetime.now(),
+            'actions': [],
+            'cart_state': {}
+        }
+        
+    def update_session(self, session_id, action):
+        if session_id in self.active_sessions:
+            self.active_sessions[session_id]['actions'].append(action)
+            self.active_sessions[session_id]['last_activity'] = datetime.now()
